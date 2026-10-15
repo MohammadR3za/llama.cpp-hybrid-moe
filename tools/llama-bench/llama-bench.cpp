@@ -332,6 +332,11 @@ static std::vector<int> parse_int_range(const std::string & s, bool allow_negati
     return result;
 }
 
+// MoE cache options, the same for every test of a run
+static size_t  g_moe_cache_mib      = 0;
+static int32_t g_moe_hybrid_threads = 0;
+static int32_t g_moe_hybrid_uploads = 1;
+
 struct cmd_params {
     std::vector<std::string>         model;
     std::vector<std::string>         hf_repo;
@@ -472,6 +477,9 @@ static void print_usage(int /* argc */, char ** argv) {
     printf("  --poll <0...100>                                  (default: %s)\n", join(cmd_params_defaults.poll, ",").c_str());
     printf("  -ngl, --n-gpu-layers <n>                          (default: %s)\n", join(cmd_params_defaults.n_gpu_layers, ",").c_str());
     printf("  -ncmoe, --n-cpu-moe <n>                           (default: %s)\n", join(cmd_params_defaults.n_cpu_moe, ",").c_str());
+    printf("  --moe-cache-mib <n>                               device cache for the experts kept in the CPU (default: 0)\n");
+    printf("  --moe-hybrid <n>                                  CPU threads for the experts missing from the cache (default: 0, off)\n");
+    printf("  --moe-hybrid-uploads <n>                          experts a layer admits into the cache per step (default: 1)\n");
     printf("  -sm, --split-mode <none|layer|row|tensor>         (default: %s)\n", join(transform_to_str(cmd_params_defaults.split_mode, split_mode_str), ",").c_str());
     printf("  -mg, --main-gpu <i>                               (default: %s)\n", join(cmd_params_defaults.main_gpu, ",").c_str());
     printf("  -nkvo, --no-kv-offload <0|1>                      (default: %s)\n", join(cmd_params_defaults.no_kv_offload, ",").c_str());
@@ -1056,6 +1064,23 @@ static cmd_params parse_cmd_params(int argc, char ** argv) {
                 params.progress = true;
             } else if (arg == "--no-warmup") {
                 params.no_warmup = true;
+            } else if (arg == "--moe-cache-mib" || arg == "--moe-hybrid" || arg == "--moe-hybrid-uploads") {
+                if (++i >= argc) {
+                    invalid_param = true;
+                    break;
+                }
+                const int value = std::stoi(argv[i]);
+                if (value < 0) {
+                    invalid_param = true;
+                    break;
+                }
+                if (arg == "--moe-cache-mib") {
+                    g_moe_cache_mib = (size_t) value;
+                } else if (arg == "--moe-hybrid") {
+                    g_moe_hybrid_threads = value;
+                } else {
+                    g_moe_hybrid_uploads = value;
+                }
             } else if (arg == "-fitt" || arg == "--fit-target") {
                 if (++i >= argc) {
                     invalid_param = true;
@@ -1314,6 +1339,9 @@ struct cmd_params_instance {
         cparams.flash_attn_type = flash_attn;
         cparams.embeddings      = embeddings;
         cparams.op_offload      = !no_op_offload;
+        cparams.moe_cache_size     = g_moe_cache_mib*1024*1024;
+        cparams.moe_hybrid_threads = g_moe_hybrid_threads;
+        cparams.moe_hybrid_uploads = g_moe_hybrid_uploads;
         cparams.swa_full        = false;
 
         return cparams;
